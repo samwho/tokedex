@@ -4,14 +4,39 @@ version = "0.1.0"
 edition = "2024"
 description = "Explore token vocabulary coverage in local agent conversations"
 license = "MIT"
+repository = "https://github.com/samwho/tokedex"
+readme = "README.md"
+keywords = ["tokenizer", "cli", "codex", "claude", "pi"]
+categories = ["command-line-utilities", "development-tools"]
+
+[lints.rust]
+future_incompatible = { level = "deny", priority = -1 }
+rust_2018_idioms = { level = "deny", priority = -1 }
+unsafe_code = "forbid"
+warnings = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+unwrap_used = "deny"
 
 [dependencies]
 anyhow = "1"
 base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["std"] }
 clap = { version = "4", features = ["derive"] }
+console = "0.16"
+indicatif = "0.18"
+rayon = "1"
 rustc-hash = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tiktoken-rs = "0.12"
 unicode-normalization = "0.1"
+unicode-width = "0.2"
 walkdir = "2"
