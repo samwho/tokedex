@@ -26,9 +26,6 @@ struct Args {
     /// Override the default ~/.pi/agent/sessions directory
     #[arg(long)]
     pi_dir: Option<PathBuf>,
-    /// Include GPT-6 using o200k_base as an unverified assumption
-    #[arg(long)]
-    assume_gpt6_o200k: bool,
     /// Print machine-readable JSON
     #[arg(long)]
     json: bool,
@@ -154,7 +151,7 @@ fn main() -> Result<()> {
                 };
                 let counts = grouped.entry(model.clone()).or_default();
                 counts.messages += 1;
-                if let Some(encoding) = encoding_for(&model, args.assume_gpt6_o200k) {
+                if let Some(encoding) = encoding_for(&model) {
                     if !encodings.contains_key(encoding) {
                         let bpe = match encoding {
                             "cl100k_base" => cl100k_base()?,
@@ -184,11 +181,11 @@ fn main() -> Result<()> {
     let models: Vec<ModelReport> = grouped
         .into_iter()
         .map(|(model, counts)| {
-            let encoding = encoding_for(&model, args.assume_gpt6_o200k);
+            let encoding = encoding_for(&model);
             let status = if model.starts_with("claude-") {
                 "approximate: Anthropic's old tokenizer is inaccurate for Claude 3 and later"
             } else if model.starts_with("gpt-6") && encoding.is_some() {
-                "assumed: GPT-6 encoding has not been verified"
+                "assumed: GPT-6 uses GPT-5.6's o200k_base tokenizer"
             } else if encoding.is_none() {
                 "unsupported: no verified tokenizer mapping"
             } else {
@@ -416,13 +413,13 @@ fn block_text(value: &Value) -> String {
         .join("\n")
 }
 
-fn encoding_for(model: &str, assume_gpt6: bool) -> Option<&'static str> {
+fn encoding_for(model: &str) -> Option<&'static str> {
     let m = model.to_ascii_lowercase();
     if m.starts_with("claude-") {
         return Some("claude_legacy");
     }
     if m.starts_with("gpt-6") {
-        return assume_gpt6.then_some("o200k_base");
+        return Some("o200k_base");
     }
     if m.starts_with("gpt-5")
         || m.starts_with("gpt-4o")
@@ -517,14 +514,10 @@ mod tests {
     }
     #[test]
     fn mapping_is_conservative() {
-        assert_eq!(encoding_for("gpt-5.6-sol", false), Some("o200k_base"));
-        assert_eq!(encoding_for("gpt-4-turbo", false), Some("cl100k_base"));
-        assert_eq!(
-            encoding_for("claude-opus-4-6", false),
-            Some("claude_legacy")
-        );
-        assert_eq!(encoding_for("gpt-6-astra", false), None);
-        assert_eq!(encoding_for("gpt-6-astra", true), Some("o200k_base"));
+        assert_eq!(encoding_for("gpt-5.6-sol"), Some("o200k_base"));
+        assert_eq!(encoding_for("gpt-4-turbo"), Some("cl100k_base"));
+        assert_eq!(encoding_for("claude-opus-4-6"), Some("claude_legacy"));
+        assert_eq!(encoding_for("gpt-6-astra"), Some("o200k_base"));
     }
     #[test]
     fn only_visible_text_blocks() {
