@@ -23,6 +23,22 @@ impl Harness for ClaudeCode {
 
     fn parse_file(&self, path: &Path) -> Result<Vec<Message>> {
         parse_lines(path, |value, messages, current_model, seen| {
+            if value["type"] == "system" || value["type"] == "attachment" {
+                let body = content_text(if value["type"] == "system" {
+                    &value["content"]
+                } else {
+                    &value["attachment"]
+                });
+                if !body.is_empty() {
+                    messages.push(Message {
+                        harness: "claude",
+                        model: None,
+                        body,
+                        used_at: timestamp_at(value),
+                    });
+                }
+                return;
+            }
             if value["type"] != "assistant" && value["type"] != "user" {
                 return;
             }

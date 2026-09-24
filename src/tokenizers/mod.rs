@@ -159,6 +159,7 @@ fn claude_legacy() -> Result<CoreBPE> {
 mod tests {
     use super::*;
     use crate::providers::{ANTHROPIC, OPENAI};
+    use proptest::prelude::*;
 
     #[test]
     fn tokenizers_determine_model_eligibility() {
@@ -170,12 +171,22 @@ mod tests {
         assert!(CLAUDE.eligible("claude-opus-4-6"));
     }
 
+    proptest! {
+        #[test]
+        fn claude_tokenizer_normalizes_nfkc(text in "[A-Z]{1,16}") {
+            let full_width: String = text.chars().map(|character| {
+                char::from_u32(u32::from(character) + 0xfee0)
+                    .expect("ASCII uppercase letters have full-width equivalents")
+            }).collect();
+            prop_assert_eq!(
+                CLAUDE.tokenize(&full_width).expect("full-width text should tokenize"),
+                CLAUDE.tokenize(&text).expect("ASCII text should tokenize"),
+            );
+        }
+    }
+
     #[test]
-    fn claude_tokenizer_normalizes_nfkc() {
-        assert_eq!(
-            CLAUDE.tokenize("Ａ").expect("full-width A should tokenize"),
-            CLAUDE.tokenize("A").expect("ASCII A should tokenize")
-        );
+    fn claude_special_token_is_preserved() {
         assert_eq!(
             CLAUDE
                 .tokenize("<META>")

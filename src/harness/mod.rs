@@ -1,6 +1,8 @@
 mod claude;
 mod codex;
 mod pi;
+#[cfg(test)]
+mod properties;
 
 use anyhow::{Context, Result};
 use chrono::DateTime;
@@ -109,7 +111,7 @@ pub fn str_at(value: &Value) -> Option<String> {
 pub fn is_message_role(value: &Value) -> bool {
     matches!(
         value.as_str(),
-        Some("system" | "user" | "assistant" | "toolResult" | "custom")
+        Some("system" | "user" | "assistant" | "toolResult" | "bashExecution" | "custom")
     )
 }
 
@@ -129,8 +131,10 @@ pub fn content_text(value: &Value) -> String {
                 "toolName",
                 "text",
                 "thinking",
+                "summary",
+                "command",
+                "execution",
                 "content",
-                "arguments",
                 "output",
             ] {
                 if let Some(value) = object.get(key) {
@@ -140,14 +144,24 @@ pub fn content_text(value: &Value) -> String {
                     }
                 }
             }
-            for key in ["input", "sections", "toolsAdded", "toolsRemoved"] {
+            for key in [
+                "arguments",
+                "input",
+                "action",
+                "sections",
+                "toolsAdded",
+                "toolsRemoved",
+            ] {
                 if let Some(value) = object.get(key)
                     && !value.is_null()
                 {
-                    parts.push(
-                        serde_json::to_string(value)
-                            .expect("serializing saved structured content should be infallible"),
-                    );
+                    parts.push(value.as_str().map_or_else(
+                        || {
+                            serde_json::to_string(value)
+                                .expect("serializing saved structured content should be infallible")
+                        },
+                        str::to_string,
+                    ));
                 }
             }
             parts.join("\n")

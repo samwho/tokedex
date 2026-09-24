@@ -31,14 +31,14 @@ impl Harness for Codex {
                 if body.is_empty() {
                     return;
                 }
-                let is_model_output = payload["role"] == "assistant"
-                    || matches!(
-                        payload["type"].as_str(),
-                        Some("function_call" | "reasoning")
+                let is_turn_item = payload["type"] != "message"
+                    || !matches!(
+                        payload["role"].as_str(),
+                        Some("user" | "developer" | "system")
                     );
                 messages.push(Message {
                     harness: "codex",
-                    model: is_model_output.then(|| current_model.clone()).flatten(),
+                    model: is_turn_item.then(|| current_model.clone()).flatten(),
                     body,
                     used_at: timestamp_at(value),
                 });

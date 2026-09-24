@@ -216,6 +216,7 @@ mod tests {
     use super::*;
     use crate::providers::{ANTHROPIC, OPENAI, Provider};
     use crate::{HighestIdReport, ModelUsageReport, TokenReport};
+    use proptest::prelude::*;
 
     fn tokenizer(name: &str, provider: &str, tokens: usize) -> TokenizerReport {
         let provider_impl: &dyn Provider = if provider == "anthropic" {
@@ -287,6 +288,43 @@ mod tests {
         assert!(output.contains("\x1b[97mtokedex\x1b[0m"));
         assert!(output.contains("\x1b[97mTokenizers\x1b[0m"));
         assert!(output.contains("\x1b[96mTotal messages\x1b[0m"));
+    }
+
+    proptest! {
+        #[test]
+        fn token_rendering_respects_display_width(
+            text in prop::collection::vec(
+                prop_oneof![
+                    "[a-zA-Z0-9]{1,12}",
+                    Just(" \t\n".to_string()),
+                    Just("⣠Ω🦀\\\"".to_string()),
+                ],
+                0..25,
+            ),
+            max_width in 1_usize..75,
+        ) {
+            let original = text.concat();
+            let rendered = token(&original, max_width);
+            prop_assert!(rendered.width() <= max_width);
+            let full = escaped_chunks(&original).concat();
+            if full.width() <= max_width {
+                prop_assert_eq!(rendered, full);
+            } else {
+                prop_assert!(rendered.contains('…'));
+            }
+        }
+
+        #[test]
+        fn most_seen_token_count_is_rendered_without_changing_token_text(
+            text in "[a-zA-Z0-9 ]{1,40}",
+            count in 1_usize..100_000,
+        ) {
+            let mut report = report();
+            report.most_common_token = Some(TokenReport { text: text.clone(), count });
+            let output = render_report_width(&report, false, 150);
+            let expected = format!("Most seen token: {} x{}", token(&text, 150), number(count));
+            prop_assert!(output.contains(&expected));
+        }
     }
 
     #[test]

@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 50dc0f01d4a7db1a9eb7a2c35d4d71eb040c592191d20fefe3c0c5ad9925accf # shrinks to steps = [Model("gpt-4o"), User("a")]
+cc 4829f6ad07b187a7f0716764157781d181d6d837721a2b06e6d2a9037280538a # shrinks to steps = [ToolCall("gpt-4o", "a")]

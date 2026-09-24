@@ -52,7 +52,7 @@ tokedex --harness codex --harness pi --provider anthropic
 tokedex --provider openai --json
 ```
 
-Conversation files are parsed and tokenized in parallel with Rayon. On an interactive terminal, discovery and tokenizer preparation display activity spinners; scanning files, tokenizing files, and decoding observed token IDs each have a measured progress bar. Progress is hidden for JSON and redirected output.
+The supported history formats and property-test generators are documented in [docs/history-formats.md](docs/history-formats.md). Conversation files are parsed and tokenized in parallel with Rayon. On an interactive terminal, discovery and tokenizer preparation display activity spinners; scanning files, tokenizing files, and decoding observed token IDs each have a measured progress bar. Progress is hidden for JSON and redirected output.
 
 ## Tokenizer coverage
 

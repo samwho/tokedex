@@ -29,6 +29,18 @@ impl Harness for Pi {
                 *current_model = str_at(&value["modelId"]).or_else(|| str_at(&value["model"]));
                 return;
             }
+            if value["type"] == "custom_message" {
+                let body = content_text(&value["content"]);
+                if !body.is_empty() {
+                    messages.push(Message {
+                        harness: "pi",
+                        model: None,
+                        body,
+                        used_at: timestamp_at(value),
+                    });
+                }
+                return;
+            }
             if value["type"] != "message" {
                 return;
             }

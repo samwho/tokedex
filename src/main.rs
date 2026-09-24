@@ -472,6 +472,7 @@ fn scan_progress(json: bool, no_color: bool) -> ProgressBar {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn provider_filter_accepts_repeated_values() {
@@ -485,6 +486,39 @@ mod tests {
             vec!["openai", "anthropic"]
         );
         assert!(select_providers(&["missing".into()]).is_err());
+    }
+
+    proptest! {
+        #[test]
+        fn aggregates_every_eligible_message_once(
+            items in prop::collection::vec(
+                (prop::sample::select(vec!["gpt-5", "gpt-4o", "unmapped"]), "[a-z ]{1,30}"),
+                0..20,
+            )
+        ) {
+            let tokenizer = TOKENIZERS[0];
+            tokenizer.prepare().expect("test encoding loads");
+            let mut lookup = HashMap::new();
+            lookup.insert("gpt-5".to_string(), tokenizer);
+            lookup.insert("gpt-4o".to_string(), tokenizer);
+            let expected_messages = items.iter().filter(|(model, _)| *model != "unmapped").count();
+            let expected_tokens: usize = items.iter()
+                .filter(|(model, _)| *model != "unmapped")
+                .map(|(_, text)| tokenizer.tokenize(text).expect("test text tokenizes").len())
+                .sum();
+            let messages = items.into_iter().map(|(model, body)| Message {
+                harness: "codex",
+                model: Some(model.to_string()),
+                body,
+                used_at: None,
+            }).collect();
+            let counts = aggregate_messages(messages, &lookup).expect("aggregate generated messages");
+            let actual = counts.get(tokenizer.name());
+            prop_assert_eq!(actual.map_or(0, |counts| counts.messages), expected_messages);
+            prop_assert_eq!(actual.map_or(0, |counts| counts.tokens), expected_tokens);
+            prop_assert_eq!(actual.map_or(0, |counts| counts.by_id.values().sum::<usize>()), expected_tokens);
+            prop_assert_eq!(actual.map_or(0, |counts| counts.by_model.values().sum::<usize>()), expected_messages);
+        }
     }
 
     #[test]
