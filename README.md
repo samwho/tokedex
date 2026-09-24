@@ -1,14 +1,35 @@
 # tokedex
 
-`tokedex` scans local Codex, Claude Code, and pi JSONL conversations and measures how much of each model's **ordinary text-token vocabulary** appears in the saved user and assistant text.
+`tokedex` scans local Codex, Claude Code, and pi JSONL conversations and measures how much of each tokenizer's vocabulary appears in the saved user and assistant text.
 
-For each model with a known tokenizer, it shows:
+For each measured model, it shows:
 
-- Unique token IDs seen, divided by the tokenizer's ordinary text vocabulary size.
+- Unique token IDs seen, divided by the tokenizer's vocabulary size (ordinary text IDs for OpenAI; all loaded IDs for the legacy Claude tokenizer).
 - The largest token ID seen (the “higher ID token”), with its decoded text.
 - The most frequent token ID, with its decoded text and count.
 
 Token IDs are counted separately per model, even when models share an encoding. Messages are encoded independently. Only saved user and assistant text is included; hidden reasoning, image/audio payloads, tools, protocol tokens, and repeated prompt context are excluded. This is a vocabulary exploration tool, not a billing or total context counter. Output is local by default; the CLI makes no API requests.
+
+The default output is a compact terminal card inspired by neofetch, suitable for a screenshot. Colors appear when stdout is a terminal; use `--no-color` for plain text or `--json` for scripts.
+
+```text
+     ▄▄▄▄▄▄▄       TOKEDEX
+   ▄██ 01 ██▄     ──────────────
+  ██ 10 11 ██      41 sessions  ·  3 models
+   ▀██ 00 ██▀      3 measured  ·  saved chat text
+     ▀▀▀▀▀▀       ██  ██  ██  ██
+
+  ┌ claude-sonnet-4-5  [OLD CLAUDE ≈]
+  │ vocab    2.40%  1,560 / 65,000
+  │ 42 messages  ·  8,000 text tokens
+  │ high   #64900 "example"
+  └ top    #123 " the"  ×340
+
+  ⚠ Claude uses Anthropic's OLD tokenizer.
+    Claude 3+ results are approximate.
+```
+
+The figures in this example are illustrative.
 
 ## Install and run
 
@@ -32,11 +53,11 @@ Use `--json` for structured output. Use `--assume-gpt6-o200k` only if you want *
 | GPT-5 and 5.x, GPT-4o, GPT-4.1, GPT-4.5, o1/o3/o4-mini, codex-mini | `o200k_base` | Text token IDs available in Rust |
 | GPT-4, GPT-4 Turbo, GPT-3.5 | `cl100k_base` | Text token IDs available in Rust |
 | GPT-6 | Unknown in published `tiktoken` mapping | Excluded by default; optional assumed mapping |
-| Claude 3 through current Claude | Unpublished | Scanned and reported as unsupported for token-ID statistics |
+| Claude 3 through current Claude | Anthropic's archived Claude tokenizer | Approximate only; prominent warning in terminal and JSON output |
 
 The [OpenAI `tiktoken` model table](https://github.com/openai/tiktoken/blob/main/tiktoken/model.py) documents OpenAI mappings; the Rust implementation uses [`tiktoken-rs`](https://docs.rs/tiktoken-rs/latest/tiktoken_rs/). The ordinary text vocabulary sizes are 100,256 for `cl100k_base` and 199,998 for `o200k_base`, as defined by [OpenAI's encoding data](https://github.com/openai/tiktoken/blob/main/tiktoken_ext/openai_public.py). OpenAI's [token counting guide](https://developers.openai.com/api/docs/guides/token-counting) explains why plain text tokenization differs from full request usage.
 
-Anthropic's [archived public tokenizer](https://github.com/anthropics/anthropic-tokenizer-typescript) explicitly says it is inaccurate from Claude 3 onward. Anthropic's [token counting API](https://platform.claude.com/docs/en/build-with-claude/token-counting) returns a count, not token IDs or a vocabulary; its documentation also says Claude 4.7 and later use a newer tokenizer. Using another model's IDs would make the requested unique percentage, highest ID, and most common token misleading, so `tokedex` leaves those values empty for Claude. It still discovers and lists Claude model/message counts.
+Anthropic's [archived public tokenizer](https://github.com/anthropics/anthropic-tokenizer-typescript) explicitly says it is inaccurate from Claude 3 onward. `tokedex` embeds its [Claude vocabulary](https://github.com/anthropics/anthropic-tokenizer-typescript/blob/main/claude.json), applies the package's NFKC normalization, and computes approximate Claude statistics in Rust. The embedded file is covered by [Anthropic's license](assets/CLAUDE_TOKENIZER_LICENSE). Its `explicit_n_vocab` metadata says 64,739, but the actual table has 64,995 ordinary IDs plus 5 special IDs. The denominator is therefore **65,000 loaded IDs**. Anthropic's [token counting API](https://platform.claude.com/docs/en/build-with-claude/token-counting) returns a count, not token IDs or a vocabulary; its documentation also says Claude 4.7 and later use a newer tokenizer. The Claude percentages and token identities shown by `tokedex` are those of the *old* tokenizer, not the current Claude models.
 
 ## History formats
 

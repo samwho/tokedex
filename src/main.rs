@@ -1,13 +1,18 @@
 use anyhow::{Context, Result};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use clap::Parser;
-use serde::Serialize;
+use rustc_hash::FxHashMap;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use tiktoken_rs::{CoreBPE, cl100k_base, o200k_base};
+use unicode_normalization::UnicodeNormalization;
 use walkdir::WalkDir;
+
+mod render;
 
 #[derive(Parser)]
 #[command(about = "Measure text token vocabulary coverage in Codex, Claude Code, and pi histories")]
@@ -27,6 +32,9 @@ struct Args {
     /// Print machine-readable JSON
     #[arg(long)]
     json: bool,
+    /// Disable terminal colors
+    #[arg(long)]
+    no_color: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,6 +86,32 @@ struct Report {
     notes: Vec<&'static str>,
 }
 
+#[derive(Deserialize)]
+struct ClaudeVocabulary {
+    pat_str: String,
+    bpe_ranks: String,
+    special_tokens: FxHashMap<String, u32>,
+}
+
+fn claude_legacy() -> Result<(CoreBPE, usize)> {
+    let data: ClaudeVocabulary = serde_json::from_str(include_str!("../assets/claude.json"))?;
+    let mut encoder = FxHashMap::default();
+    for line in data.bpe_ranks.lines() {
+        let mut words = line.split_whitespace();
+        words.next().context("missing Claude vocabulary prefix")?;
+        let offset: u32 = words
+            .next()
+            .context("missing Claude rank offset")?
+            .parse()?;
+        for (index, token) in words.enumerate() {
+            encoder.insert(STANDARD.decode(token)?, offset + index as u32);
+        }
+    }
+    let size = encoder.len() + data.special_tokens.len();
+    let bpe = CoreBPE::new(encoder, data.special_tokens, &data.pat_str)?;
+    Ok((bpe, size))
+}
+
 fn main() -> Result<()> {
     let args = Args::parse();
     let home = std::env::var_os("HOME").context("HOME is not set")?;
@@ -102,6 +136,7 @@ fn main() -> Result<()> {
     let mut unattributed = 0;
     let mut files_scanned = 0;
     let mut encodings: HashMap<&'static str, CoreBPE> = HashMap::new();
+    let mut claude_vocabulary_size = None;
     for (source, root) in roots {
         for path in source_files(source, &root) {
             let messages = match read_messages(source, &path) {
@@ -121,16 +156,24 @@ fn main() -> Result<()> {
                 counts.messages += 1;
                 if let Some(encoding) = encoding_for(&model, args.assume_gpt6_o200k) {
                     if !encodings.contains_key(encoding) {
-                        encodings.insert(
-                            encoding,
-                            match encoding {
-                                "cl100k_base" => cl100k_base()?,
-                                _ => o200k_base()?,
-                            },
-                        );
+                        let bpe = match encoding {
+                            "cl100k_base" => cl100k_base()?,
+                            "claude_legacy" => {
+                                let (bpe, size) = claude_legacy()?;
+                                claude_vocabulary_size = Some(size);
+                                bpe
+                            }
+                            _ => o200k_base()?,
+                        };
+                        encodings.insert(encoding, bpe);
                     }
                     let bpe = &encodings[encoding];
-                    for id in bpe.encode_ordinary(&message.text) {
+                    let ids = if encoding == "claude_legacy" {
+                        bpe.encode_with_special_tokens(&message.text.nfkc().collect::<String>())
+                    } else {
+                        bpe.encode_ordinary(&message.text)
+                    };
+                    for id in ids {
                         counts.tokens += 1;
                         *counts.by_id.entry(id).or_default() += 1;
                     }
@@ -138,12 +181,12 @@ fn main() -> Result<()> {
             }
         }
     }
-    let models = grouped
+    let models: Vec<ModelReport> = grouped
         .into_iter()
         .map(|(model, counts)| {
             let encoding = encoding_for(&model, args.assume_gpt6_o200k);
             let status = if model.starts_with("claude-") {
-                "unsupported: Anthropic has not published the current tokenizer or token IDs"
+                "approximate: Anthropic's old tokenizer is inaccurate for Claude 3 and later"
             } else if model.starts_with("gpt-6") && encoding.is_some() {
                 "assumed: GPT-6 encoding has not been verified"
             } else if encoding.is_none() {
@@ -151,12 +194,10 @@ fn main() -> Result<()> {
             } else {
                 "exact for visible text"
             };
-            let vocabulary_size = encoding.map(|name| {
-                if name == "cl100k_base" {
-                    100_256
-                } else {
-                    199_998
-                }
+            let vocabulary_size = encoding.map(|name| match name {
+                "cl100k_base" => 100_256,
+                "claude_legacy" => claude_vocabulary_size.unwrap_or_default(),
+                _ => 199_998,
             });
             let bpe = encoding.and_then(|name| encodings.get(name));
             let highest_id_token = counts
@@ -186,19 +227,26 @@ fn main() -> Result<()> {
             }
         })
         .collect();
+    let mut notes = vec![
+        "Counts cover saved user and assistant text only. Images, tools, hidden reasoning, and protocol tokens are excluded.",
+        "A token ID is decoded alone; its bytes may not be valid UTF-8, so invalid bytes use the U+FFFD replacement character.",
+    ];
+    if models
+        .iter()
+        .any(|model: &ModelReport| model.encoding.as_deref() == Some("claude_legacy"))
+    {
+        notes.push("WARNING: Claude uses Anthropic's old tokenizer, which is inaccurate for Claude 3 and later; Claude IDs and percentages are approximations.");
+    }
     let report = Report {
         files_scanned,
         models,
         unattributed_messages: unattributed,
-        notes: vec![
-            "Counts cover saved user and assistant text only. Images, tools, hidden reasoning, and protocol tokens are excluded.",
-            "A token ID is decoded alone; its bytes may not be valid UTF-8, so invalid bytes use the U+FFFD replacement character.",
-        ],
+        notes,
     };
     if args.json {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
-        print_report(&report);
+        render::print_report(&report, !args.no_color);
     }
     Ok(())
 }
@@ -371,7 +419,7 @@ fn block_text(value: &Value) -> String {
 fn encoding_for(model: &str, assume_gpt6: bool) -> Option<&'static str> {
     let m = model.to_ascii_lowercase();
     if m.starts_with("claude-") {
-        return None;
+        return Some("claude_legacy");
     }
     if m.starts_with("gpt-6") {
         return assume_gpt6.then_some("o200k_base");
@@ -400,43 +448,6 @@ fn encoding_for(model: &str, assume_gpt6: bool) -> Option<&'static str> {
         return Some("cl100k_base");
     }
     None
-}
-
-fn print_report(report: &Report) {
-    println!("Scanned {} session files", report.files_scanned);
-    for m in &report.models {
-        println!("\n{} — {}", m.model, m.status);
-        println!("  messages: {}", m.messages);
-        if let (Some(encoding), Some(unique), Some(size), Some(percent), Some(tokens)) = (
-            &m.encoding,
-            m.unique_tokens,
-            m.vocabulary_size,
-            m.vocabulary_percent,
-            m.tokens,
-        ) {
-            println!("  encoding: {encoding}; text tokens: {tokens}");
-            println!("  unique: {unique}/{size} ({percent:.2}% of ordinary vocabulary)");
-            if let Some(token) = &m.highest_id_token {
-                println!(
-                    "  highest ID: {} {}",
-                    token.id,
-                    serde_json::to_string(&token.text).unwrap()
-                );
-            }
-            if let Some(token) = &m.most_common_token {
-                println!(
-                    "  most common: {} {} ({} uses)",
-                    token.id,
-                    serde_json::to_string(&token.text).unwrap(),
-                    token.count
-                );
-            }
-        }
-    }
-    if report.unattributed_messages > 0 {
-        println!("\nUnattributed messages: {}", report.unattributed_messages);
-    }
-    println!("\n{}", report.notes[0]);
 }
 
 #[cfg(test)]
@@ -508,7 +519,10 @@ mod tests {
     fn mapping_is_conservative() {
         assert_eq!(encoding_for("gpt-5.6-sol", false), Some("o200k_base"));
         assert_eq!(encoding_for("gpt-4-turbo", false), Some("cl100k_base"));
-        assert_eq!(encoding_for("claude-opus-4-6", false), None);
+        assert_eq!(
+            encoding_for("claude-opus-4-6", false),
+            Some("claude_legacy")
+        );
         assert_eq!(encoding_for("gpt-6-astra", false), None);
         assert_eq!(encoding_for("gpt-6-astra", true), Some("o200k_base"));
     }
@@ -516,5 +530,17 @@ mod tests {
     fn only_visible_text_blocks() {
         let blocks = serde_json::json!([{"type":"text","text":"hello"}, {"type":"thinking","thinking":"secret"}, {"type":"tool_use","input":{"x":1}}]);
         assert_eq!(block_text(&blocks), "hello");
+    }
+
+    #[test]
+    fn archived_claude_vocabulary_loads_and_normalizes() {
+        let (bpe, size) = claude_legacy().unwrap();
+        assert_eq!(size, 65_000);
+        let normalized: String = "Ａ".nfkc().collect();
+        assert_eq!(
+            bpe.encode_with_special_tokens(&normalized),
+            bpe.encode_with_special_tokens("A")
+        );
+        assert_eq!(bpe.encode_with_special_tokens("<META>"), vec![1]);
     }
 }
